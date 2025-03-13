@@ -15,7 +15,7 @@ class LLMTIMEPreprocessor:
                  model_name="Qwen/Qwen2.5-0.5B-Instruct"):
         """Initialize the LLMTIME preprocessor.
         
-        Args:
+        Parameters:
             - scaling_factor: Factor to scale numeric values
             - decimal_places: Number of decimal places to round to
             - var_separator: Separator between variables (default: ",")
@@ -34,7 +34,7 @@ class LLMTIMEPreprocessor:
     def encode_timestep(self, values):
         """Encode values at a single timestep.
         
-        Args:
+        Parameters:
             - values: Array of values for different variables at one timestep
             
         Returns:
@@ -58,7 +58,7 @@ class LLMTIMEPreprocessor:
     def encode_sequence(self, sequence):
         """Encode a multivariate time series sequence.
         
-        Args:
+        Parameters:
             - sequence: Array of shape (timesteps, variables) containing the time series
             
         Returns:
@@ -75,7 +75,7 @@ class LLMTIMEPreprocessor:
     def decode_timestep(self, encoded_timestep):
         """Decode a single timestep from string to numeric values.
         
-        Args:
+        Parameters:
             - encoded_timestep: String representation of values at one timestep
             
         Returns:
@@ -92,7 +92,7 @@ class LLMTIMEPreprocessor:
     def decode_sequence(self, encoded_sequence):
         """Decode an entire sequence from string to numeric array.
         
-        Args:
+        Parameters:
             - encoded_sequence: String representation of the time series
             
         Returns:
@@ -110,7 +110,7 @@ class LLMTIMEPreprocessor:
     def tokenize(self, text):
         """Tokenize text using the model's tokenizer.
         
-        Args:
+        Parameters:
             - text: Text to tokenize
             
         Returns:
@@ -122,7 +122,7 @@ class LLMTIMEPreprocessor:
     def prepare_training_data(self, data, context_length, forecast_length, stride=1):
         """Prepare time series data for training by creating input-output pairs.
         
-        Args:
+        Parameters:
             - data: Array of shape (n_systems, timesteps, variables) or (timesteps, variables)
             - context_length: Number of timesteps to use as input context
             - forecast_length: Number of timesteps to predict
@@ -155,7 +155,7 @@ class LLMTIMEPreprocessor:
     def get_example_sequences(self, data, seq_length=3):
         """Generate example sequences to demonstrate preprocessing and tokenization.
         
-        Args:
+        Parameters:
             - data: Time series data array
             - num_examples: Number of examples to generate
             - seq_length: Length of each example sequence
@@ -187,7 +187,7 @@ class LLMTIMEPreprocessor:
 def determine_scaling_factor(data):
     """Calculate scaling factor based on data.
         
-    Args:
+    Parameters:
         - data: Array containing time series data
             
     Returns:

@@ -35,6 +35,18 @@ def split_data(trajectories, train_ratio=0.8):
     return train_data, val_data
 
 def evaluate_untrained_model(ratio=0.8,test_size=100,context_length = 50, forecast_length = 50):
+    '''Evaluate the untrained model on the Lotka-Volterra dataset
+    
+    Parameters:
+        - ratio: The ratio of the dataset to use for training
+        - test_size: The number of systems to evaluate
+        - context_length: The length of the context segment
+        - forecast_length: The length of the forecast segment
+
+    Returns:
+        - results: A dictionary containing the evaluation results
+    '''
+
     # Load the data
     trajectories, time_points = load_data()
 
