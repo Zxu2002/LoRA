@@ -1,6 +1,8 @@
 import numpy as np
 from transformers import AutoTokenizer
 import json
+import h5py
+from tqdm import tqdm
 
 class LLMTIMEPreprocessor:
     """
@@ -199,6 +201,38 @@ def determine_scaling_factor(data):
     return val
 
 
+def load_and_preprocess(data_path):
+    """
+    Load Lotka-Volterra data and preprocess using LLMTIME scheme.
+    
+    Parameters:
+        - data_path: Path to the HDF5 file containing the dataset
+        - train_ratio: Ratio of data to use for training (remainder used for validation)
+        
+    Returns:
+        -train_texts, val_texts: Lists of preprocessed text sequences for training and validation
+    """
+    # Load data from HDF5 file
+    with h5py.File(data_path, "r") as f:
+        trajectories = f["trajectories"][:]  # Shape: (1000, 100, 2)
+        time_points = f["time"][:]  # Shape: (100,)
+    processed_trajectories = []
+    # Determine appropriate scaling factor based on data distribution
+    scaling_factor = determine_scaling_factor(trajectories)
+    preprocessor = LLMTIMEPreprocessor(scaling_factor=scaling_factor)
+
+    num_trajectories = trajectories.shape[0]
+    for i in tqdm(range(trajectories.shape[0])):
+        # scaling_factor = determine_scaling_factor(trajectories[i])
+        
+        # Encode each trajectory
+        encoded_sequence = preprocessor.encode_sequence(trajectories[i])
+        processed_trajectories.append(encoded_sequence)
+        
+    
+    return processed_trajectories, scaling_factor
+
+
 if __name__ == "__main__":
     data = [[1,2],[2,4],[3,6]]
     factor = determine_scaling_factor(data)
@@ -212,6 +246,19 @@ if __name__ == "__main__":
     result = {}
     result["example1"] = preprocessor.get_example_sequences(data)
     result["example2"] = preprocessor2.get_example_sequences(data2)
+
+    # Save the examples to a JSON file
     save_path = "results/examples.json"
     with open(save_path, 'w') as f:
         json.dump(result, f)
+    
+    # Load and preprocess the Lotka-Volterra data
+    save_path = "results/processed_all_traj.json"
+    data_path = "lotka_volterra_data.h5"
+    processed_trajectories,scaling_factor  = load_and_preprocess(data_path)
+    with open(save_path, 'w') as f:
+        json.dump(processed_trajectories, f)
+    
+    saved_path = "results/scaling_factor.json"
+    with open(saved_path, 'w') as f:
+        json.dump({"scaling_factor": scaling_factor}, f)

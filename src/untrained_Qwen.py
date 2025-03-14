@@ -34,7 +34,7 @@ def split_data(trajectories, train_ratio=0.8):
     
     return train_data, val_data
 
-def evaluate_untrained_model(ratio=0.8,test_size=100,context_length = 50, forecast_length = 50):
+def evaluate_untrained_model(ratio=0.8,test_size=100,context_length = 80, forecast_length = 20):
     '''Evaluate the untrained model on the Lotka-Volterra dataset
     
     Parameters:
@@ -60,12 +60,15 @@ def evaluate_untrained_model(ratio=0.8,test_size=100,context_length = 50, foreca
     errors_mse = []
     errors_mae = []
     errors_r2 = []
+    validation_size = int(len(trajectories) * (1-ratio))
+    validation_data = trajectories[-validation_size:]
 
+    scaling_factor = determine_scaling_factor(trajectories[:])
+    preprocessor = LLMTIMEPreprocessor(scaling_factor=scaling_factor)
     with torch.no_grad():
-        for system_idx in tqdm(range(min(10,len(trajectories)))): 
+        for system_idx in tqdm(range(min(len(validation_data),len(trajectories)))): 
             #Load preprocessor
-            scaling_factor = determine_scaling_factor(trajectories[system_idx])
-            preprocessor = LLMTIMEPreprocessor(scaling_factor=scaling_factor)
+
 
             # Extract input and target segments
             input_segment = trajectories[system_idx, :context_length]
