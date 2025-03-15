@@ -10,8 +10,6 @@ import numpy as np
 from src.preprocessor import LLMTIMEPreprocessor
 from qwen import load_qwen
 
-
-# LoRA implementation
 class LoRALinear(nn.Module):
     def __init__(self, original_linear: nn.Linear, r: int, alpha: int = None):
         super().__init__()
@@ -253,56 +251,136 @@ def evaluate_model(model, val_loader, tokenizer, context_ratio=0.8):
     return result
 
 # Defines the maximum context length
-max_ctx_length = 256
-train_input_ids = process_sequences(
-    train_texts, tokenizer, max_ctx_length, stride=max_ctx_length // 2
-)
-val_input_ids = process_sequences(
-    val_texts, tokenizer, max_ctx_length, stride=max_ctx_length
-)
+   
+# Define hyperparameter search space
+lora_ranks = [2, 4, 8]
+learning_rates = [1e-5, 5e-5, 1e-4]
+context_lengths = [128, 512, 768]
 
-batch_size = 2
-learning_rate = 1e-5
+best_hyperparams = None
+best_val_score = float("inf")
 
-optimizer = torch.optim.Adam(
-    (p for p in model.parameters() if p.requires_grad), lr=learning_rate
-)
-train_dataset = TensorDataset(train_input_ids)
-train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+results = {}
 
-valid_dataset = TensorDataset(val_input_ids)
-valid_loader = DataLoader(valid_dataset, batch_size=batch_size, shuffle=False)
+# Load model and tokenizer
+model, tokenizer = load_qwen()
 
+for lora_rank in lora_ranks:
+    for learning_rate in learning_rates:
+        print(f"\n=== Training LoRA rank {lora_rank}, LR {learning_rate} ===")
 
-# Prepare components with Accelerator
-accelerator = Accelerator()
-model, optimizer, train_loader = accelerator.prepare(model, optimizer, train_loader)
+        # Freeze all parameters except LoRA-adapted layers
+        for param in model.parameters():
+            param.requires_grad = False
+        
+        # Apply LoRA modifications
+        for layer in model.model.layers:
+            layer.self_attn.q_proj = LoRALinear(layer.self_attn.q_proj, r=lora_rank)
+            layer.self_attn.v_proj = LoRALinear(layer.self_attn.v_proj, r=lora_rank)
+        
+        # Prepare optimizer
+        optimizer = torch.optim.Adam(
+            (p for p in model.parameters() if p.requires_grad), lr=learning_rate
+        )
 
-model.train()
-steps = 0
-pbar = tqdm(total=10000)
-while steps < 10000:
-    progress_bar = tqdm(train_loader, desc=f"Steps {steps}")
-    for (batch,) in progress_bar:
-        optimizer.zero_grad()
-        outputs = model(batch, labels=batch)
-        loss = outputs.loss
-        accelerator.backward(loss)
-        optimizer.step()
-        steps += 1
+        # Data Preparation
+        train_input_ids = process_sequences(
+            train_texts, tokenizer, max_length=256, stride=128
+        )
+        val_input_ids = process_sequences(
+            val_texts, tokenizer, max_length=256, stride=128
+        )
 
-        progress_bar.set_postfix(loss=loss.item())
-        if steps > 10000:
-            break
+        batch_size = 2
+        train_dataset = TensorDataset(train_input_ids)
+        train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
 
-        pbar.update(1)
+        valid_dataset = TensorDataset(val_input_ids)
+        valid_loader = DataLoader(valid_dataset, batch_size=batch_size, shuffle=False)
 
-model.eval()
-lora_metrics = evaluate_model(model, valid_loader, tokenizer)
-print(lora_metrics)
-# Save the model
-saved_path = "results/lora_metrics.json"
-with open(saved_path, 'w') as f:
-    json.dump({"lora_metrics": lora_metrics}, f)
+        # Prepare components with Accelerator
+        accelerator = Accelerator()
+        model, optimizer, train_loader = accelerator.prepare(model, optimizer, train_loader)
 
+        model.train()
+        steps = 0
+        pbar = tqdm(total=10000)
+        while steps < 10000:
+            progress_bar = tqdm(train_loader, desc=f"Steps {steps}")
+            for (batch,) in progress_bar:
+                optimizer.zero_grad()
+                outputs = model(batch, labels=batch)
+                loss = outputs.loss
+                accelerator.backward(loss)
+                optimizer.step()
+                steps += 1
 
+                progress_bar.set_postfix(loss=loss.item())
+                if steps > 10000:
+                    break
+
+                pbar.update(1)
+
+        model.eval()
+        metrics = evaluate_model(model, valid_loader, tokenizer)
+        
+        results[f"lora_r{lora_rank}_lr{learning_rate}"] = metrics
+        
+        # Track best performing model
+        if metrics["MSE"] is not None and metrics["MSE"] < best_val_score:
+            best_val_score = metrics["MSE"]
+            best_hyperparams = (lora_rank, learning_rate)
+
+        print(f"Results for LoRA rank {lora_rank}, LR {learning_rate}: {metrics}")
+
+# **Context Length Experiments with Best Hyperparameters**
+best_rank, best_lr = best_hyperparams
+results["best_hyperparams"] = best_hyperparams  
+print(f"\nBest Hyperparameters: Rank={best_rank}, LR={best_lr}")
+
+for context_length in context_lengths:
+    print(f"\n=== Testing Context Length {context_length} ===")
+
+    train_input_ids = process_sequences(train_texts, tokenizer, max_length=context_length, stride=context_length//2)
+    val_input_ids = process_sequences(val_texts, tokenizer, max_length=context_length, stride=context_length//2)
+
+    train_dataset = TensorDataset(train_input_ids)
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+
+    valid_dataset = TensorDataset(val_input_ids)
+    valid_loader = DataLoader(valid_dataset, batch_size=batch_size, shuffle=False)
+
+    accelerator = Accelerator()
+    model, optimizer, train_loader = accelerator.prepare(model, optimizer, train_loader)
+
+    model.train()
+    steps = 0
+    pbar = tqdm(total=2000)
+    while steps < 2000:
+        progress_bar = tqdm(train_loader, desc=f"Steps {steps}")
+        for (batch,) in progress_bar:
+            optimizer.zero_grad()
+            outputs = model(batch, labels=batch)
+            loss = outputs.loss
+            accelerator.backward(loss)
+            optimizer.step()
+            steps += 1
+
+            progress_bar.set_postfix(loss=loss.item())
+            if steps > 2000:
+                break
+
+            pbar.update(1)
+
+    model.eval()
+    context_metrics = evaluate_model(model, valid_loader, tokenizer)
+
+    results[f"context_len{context_length}"] = context_metrics
+    print(f"Results for Context Length {context_length}: {context_metrics}")
+
+# Save results
+saved_path = "results/lora_hyperparam_search.json"
+with open(saved_path, "w") as f:
+    json.dump(results, f, indent=4)
+
+print("Hyperparameter search completed. Results saved.")
