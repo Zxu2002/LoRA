@@ -344,6 +344,13 @@ for lora_rank in lora_ranks:
             "LoRA Rank": lora_rank,
             "Learning Rate": learning_rate,
         }
+        if test_results["MSE"] < best_val_score:
+            best_val_score = test_results["MSE"]
+            best_hyperparams = (lora_rank, learning_rate)
+            save_path = "results/lora_model_hyper.pth"
+            torch.save(model.state_dict(), save_path)
+            json.dump({"best_hyperparams": best_hyperparams}, open("results/best_hyperparams.json", "w"), indent=4)
+            print(f"Model saved to {save_path}")
 
 saved_path = "results/kfold_lora_test_competition.json"
 with open(saved_path, "w") as f:
