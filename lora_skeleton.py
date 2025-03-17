@@ -310,11 +310,17 @@ for fold, (train_idx, val_idx) in enumerate(kf.split(train_input_ids)):
 
             pbar.update(1)
 
+
+
     # Evaluation on Validation Set
     model.eval()
     fold_result = evaluate_model(model, val_loader, tokenizer)
     fold_metrics.append(fold_result)
     print(f"Fold {fold + 1} Results: {fold_result}")
+
+save_path = "results/lora_model.pth"
+torch.save(model.state_dict(), save_path)
+print(f"Model saved to {save_path}")
 
 # Compute Average Metrics Over All Folds
 average_metrics = {

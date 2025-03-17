@@ -4,7 +4,8 @@ import torch
 import numpy as np
 import matplotlib.pyplot as plt
 from src.untrained_Qwen import load_data
-
+from qwen import load_qwen
+from lora_skeleton import LoRALinear
 
 def plot_trajectory(model, trajectory_id, tokenizer, context_length=80, forecast_length = 20):
     model.eval()
@@ -51,3 +52,20 @@ def plot_trajectory(model, trajectory_id, tokenizer, context_length=80, forecast
     fig.suptitle("Trajectory {}".format(trajectory_id))
     plt.savefig("graphs/lora_skele_trajectory_{}.png".format(trajectory_id))
     plt.show()
+
+if __name__ == "__main__":
+    model, tokenizer = load_qwen()
+
+    # Ensure LoRA is applied before loading the state dict
+    lora_rank = 4
+    for param in model.parameters():
+        param.requires_grad = False
+
+    for layer in model.model.layers:
+        layer.self_attn.q_proj = LoRALinear(layer.self_attn.q_proj, r=lora_rank)
+        layer.self_attn.v_proj = LoRALinear(layer.self_attn.v_proj, r=lora_rank)
+
+    # Load the saved parameters
+    model.load_state_dict(torch.load("results/lora_model.pth"))
+
+    print("Model parameters loaded successfully!")
