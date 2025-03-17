@@ -2,13 +2,16 @@ import math
 import json
 import torch
 import torch.nn as nn
-from torch.utils.data import DataLoader, TensorDataset
+from torch.utils.data import DataLoader, TensorDataset, Subset
 from tqdm import tqdm
 from accelerate import Accelerator
 import numpy as np
+from matplotlib import pyplot as plt
 
-from src.preprocessor import LLMTIMEPreprocessor
+from src.preprocessor import LLMTIMEPreprocessor, determine_scaling_factor
+from src.untrained_Qwen import load_data
 from qwen import load_qwen
+from sklearn.model_selection import KFold, train_test_split
 
 
 # LoRA implementation
@@ -50,13 +53,7 @@ for layer in model.model.layers:
 # ^These are the parts that will actually be trained!
 
 # Process the data into sequences of text
-train_percentage = 0.8
-context_percentage = 0.8
 all_texts = json.load(open("results/processed_all_traj.json"))
-train_texts = all_texts[: int(len(all_texts) * train_percentage)]
-val_texts = all_texts[int(len(all_texts) * train_percentage) :]
-
-
 
 # Modified tokenization with chunking
 def process_sequences(texts, tokenizer, max_length=512, stride=256):
@@ -252,57 +249,86 @@ def evaluate_model(model, val_loader, tokenizer, context_ratio=0.8):
     }
     return result
 
+
+
 # Defines the maximum context length
 max_ctx_length = 256
-train_input_ids = process_sequences(
-    train_texts, tokenizer, max_ctx_length, stride=max_ctx_length // 2
-)
-val_input_ids = process_sequences(
-    val_texts, tokenizer, max_ctx_length, stride=max_ctx_length
-)
+
+test_size = 0.2  # 20% for testing
+train_size = 1 - test_size  # 80% for training (used for K-Fold)
+
+all_input_ids = process_sequences(all_texts, tokenizer, max_ctx_length, stride=max_ctx_length // 2)
+train_input_ids, test_input_ids = train_test_split(all_input_ids, test_size=test_size, random_state=42)
+
+# Create Testing Dataset
+test_dataset = TensorDataset(test_input_ids)
+test_loader = DataLoader(test_dataset, batch_size=2, shuffle=False)
+
 
 batch_size = 2
 learning_rate = 1e-5
+num_folds = 5  
 
-optimizer = torch.optim.Adam(
-    (p for p in model.parameters() if p.requires_grad), lr=learning_rate
-)
-train_dataset = TensorDataset(train_input_ids)
-train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
-
-valid_dataset = TensorDataset(val_input_ids)
-valid_loader = DataLoader(valid_dataset, batch_size=batch_size, shuffle=False)
-
-
-# Prepare components with Accelerator
+# Initialize Cross-Validation
+kf = KFold(n_splits=num_folds, shuffle=True, random_state=42)
+fold_metrics = []
 accelerator = Accelerator()
-model, optimizer, train_loader = accelerator.prepare(model, optimizer, train_loader)
+for fold, (train_idx, val_idx) in enumerate(kf.split(train_input_ids)):
+    print(f"\n===== Fold {fold + 1} / {num_folds} =====")
 
-model.train()
-steps = 0
-pbar = tqdm(total=10000)
-while steps < 10000:
-    progress_bar = tqdm(train_loader, desc=f"Steps {steps}")
-    for (batch,) in progress_bar:
-        optimizer.zero_grad()
-        outputs = model(batch, labels=batch)
-        loss = outputs.loss
-        accelerator.backward(loss)
-        optimizer.step()
-        steps += 1
+    # Create Datasets and Dataloaders for this fold
+    train_dataset = Subset(TensorDataset(train_input_ids), train_idx)
+    val_dataset = Subset(TensorDataset(train_input_ids), val_idx)
 
-        progress_bar.set_postfix(loss=loss.item())
-        if steps > 10000:
-            break
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
 
-        pbar.update(1)
+    # Reinitialize Model & Optimizer for Each Fold
+    model, tokenizer = load_qwen()  # Reload model for a fresh start in each fold
+    optimizer = torch.optim.Adam((p for p in model.parameters() if p.requires_grad), lr=learning_rate)
+    model, optimizer, train_loader = accelerator.prepare(model, optimizer, train_loader)
 
-model.eval()
-lora_metrics = evaluate_model(model, valid_loader, tokenizer)
-print(lora_metrics)
-# Save the model
-saved_path = "results/lora_metrics.json"
+    # Training Loop
+    model.train()
+    steps = 0
+    max_steps_per_fold = 2000 
+    pbar = tqdm(total=max_steps_per_fold)
+
+    while steps < max_steps_per_fold:
+        progress_bar = tqdm(train_loader, desc=f"Fold {fold + 1} - Steps {steps}")
+        for (batch,) in progress_bar:
+            optimizer.zero_grad()
+            outputs = model(batch, labels=batch)
+            loss = outputs.loss
+            accelerator.backward(loss)
+            optimizer.step()
+            steps += 1
+
+            progress_bar.set_postfix(loss=loss.item())
+            if steps >= max_steps_per_fold:
+                break
+
+            pbar.update(1)
+
+    # Evaluation on Validation Set
+    model.eval()
+    fold_result = evaluate_model(model, val_loader, tokenizer)
+    fold_metrics.append(fold_result)
+    print(f"Fold {fold + 1} Results: {fold_result}")
+
+# Compute Average Metrics Over All Folds
+average_metrics = {
+    "MSE": np.mean([m["MSE"] for m in fold_metrics]),
+    "MAE": np.mean([m["MAE"] for m in fold_metrics]),
+    "R²": np.mean([m["R²"] for m in fold_metrics]),
+}
+
+print(f"\n===== Final Cross-Validation Results =====")
+print(f"Average MSE: {average_metrics['MSE']:.4f}")
+print(f"Average MAE: {average_metrics['MAE']:.4f}")
+print(f"Average R²: {average_metrics['R²']:.4f}")
+
+# Save the final results
+saved_path = "results/kfold_lora_metrics.json"
 with open(saved_path, 'w') as f:
-    json.dump({"lora_metrics": lora_metrics}, f)
-
-
+    json.dump({"kfold_lora_metrics": average_metrics, "folds": fold_metrics}, f)

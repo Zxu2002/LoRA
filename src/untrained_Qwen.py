@@ -81,7 +81,7 @@ def evaluate_untrained_model(ratio=0.8,test_size=100,context_length = 80, foreca
             inputs = tokenizer(encoded_input, return_tensors="pt")
             inputs = {k: v.to(device) for k, v in inputs.items()}
             # inputs = {k: v.to(qwen.device) for k, v in inputs}
-            
+
             # Generate continuation
             output_ids = qwen.generate(
                 input_ids=inputs["input_ids"],
@@ -128,6 +128,53 @@ def evaluate_untrained_model(ratio=0.8,test_size=100,context_length = 80, foreca
     return results
 
 
+def plot_trajectory(trajectory_id, context_length=80, forecast_length = 20):
+    qwen, tokenizer = load_qwen()
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    qwen = qwen.to(device)
+    qwen.eval()
+    trajectories, time_points = load_data()
+    scaling_factor = determine_scaling_factor(trajectories[:])
+    preprocessor = LLMTIMEPreprocessor(scaling_factor=scaling_factor)
+    trajectory = trajectories[trajectory_id]
+    input_segment = trajectory[:context_length]
+    target_segment = trajectory[context_length:context_length+forecast_length]
+    encoded_input = preprocessor.encode_sequence(input_segment)
+    inputs = tokenizer(encoded_input, return_tensors="pt")
+    inputs = {k: v.to(device) for k, v in inputs.items()}
+    output_ids = qwen.generate(
+        input_ids=inputs["input_ids"],
+        attention_mask=inputs["attention_mask"],
+        max_new_tokens=forecast_length * 10,
+        do_sample=False,      # Deterministic generation
+        pad_token_id=tokenizer.eos_token_id
+    )
+    generated_text = tokenizer.decode(output_ids[0], skip_special_tokens=True)
+
+    prompt_text = tokenizer.decode(inputs["input_ids"][0], skip_special_tokens=True)
+    generated_sequence = generated_text[len(prompt_text):]
+    forecast_parts = [part.strip() for part in generated_sequence.split(';') if part.strip()]
+    clean_forecast = ';'.join(forecast_parts)
+    predicted_segment = preprocessor.decode_sequence(clean_forecast)
+    fig, axes = plt.subplots(1, 2, figsize=(12, 6))
+
+    axes[0].plot(np.arange(context_length), input_segment[:, 0], label="Input")
+    axes[0].plot(np.arange(context_length, context_length + forecast_length), target_segment[:, 0], label="Target")
+    axes[0].plot(np.arange(context_length, context_length + forecast_length), predicted_segment[:, 0], label="Prediction")
+    axes[0].legend()
+    axes[0].set_title("Prey")
+
+    # Example of adding a second subplot
+    axes[1].plot(np.arange(context_length), input_segment[:, 1], label="Input")
+    axes[1].plot(np.arange(context_length, context_length + forecast_length), target_segment[:, 1], label="Target")
+    axes[1].plot(np.arange(context_length, context_length + forecast_length), predicted_segment[:, 1], label="Prediction")
+    axes[1].legend()
+    axes[1].set_title("Predator")
+
+    plt.tight_layout()
+    fig.suptitle("Trajectory {}".format(trajectory_id))
+    plt.savefig("graphs/trajectory_{}.png".format(trajectory_id))
+    plt.show()
 
 if __name__ == "__main__":
     result = evaluate_untrained_model()
@@ -137,4 +184,5 @@ if __name__ == "__main__":
     print(result)
     qwen, tokenizer = load_qwen()
     print(qwen)
-  
+    
+    plot_trajectory(0)
