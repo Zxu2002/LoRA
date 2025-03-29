@@ -12,7 +12,7 @@ from tqdm import tqdm
 # Import the model 
 from qwen import load_qwen
 from transformers import AutoTokenizer
-from preprocessor import LLMTIMEPreprocessor, determine_scaling_factor
+from .preprocessor import LLMTIMEPreprocessor, determine_scaling_factor
 
 
 # qwen, tokenizer = load_qwen()

@@ -6,6 +6,7 @@ from torch.utils.data import DataLoader, TensorDataset
 from tqdm import tqdm
 from accelerate import Accelerator
 import numpy as np
+from torch.cuda.amp import autocast, GradScaler
 
 from src.preprocessor import LLMTIMEPreprocessor
 from qwen import load_qwen
@@ -60,15 +61,17 @@ def process_sequences(texts, tokenizer, max_length=512, stride=256):
             all_input_ids.append(chunk)
     return torch.stack(all_input_ids)
 
-def evaluate_model(model, val_loader, tokenizer, context_ratio=0.8):
+
+def evaluate_model_batched(model, val_loader, tokenizer, context_ratio=0.8, batch_size=8):
     """
-    Evaluate the model on validation data and compute metrics.
+    Evaluate the model on validation data using batched processing.
     
     Parameters:
         - model: The model to evaluate
         - val_loader: DataLoader containing validation data
         - tokenizer: Tokenizer used to decode predicted token IDs
         - context_ratio: Ratio of sequence to use as context
+        - batch_size: Size of batches for generation
     
     Returns:
         - result: Dictionary containing evaluation metrics
@@ -76,35 +79,35 @@ def evaluate_model(model, val_loader, tokenizer, context_ratio=0.8):
     model.eval()
     all_targets = []
     all_predictions = []
-    print("Evaluating model...")
+    print("Evaluating model with batched processing...")
     scaling_factor = json.load(open("results/scaling_factor.json"))['scaling_factor']
 
     with torch.no_grad():
-        for batch_idx, batch in enumerate(tqdm(val_loader)):
-            if batch[0].numel() == 0:
-                print("Empty batch detected. Skipping...")
+        for batch_idx, (input_batch,) in enumerate(tqdm(val_loader)):
+            if input_batch.numel() == 0:
                 continue
-                
-            # Process each example in the batch individually
-            for example_idx, text in enumerate(batch[0]):
-                # Decode the sequence
+            
+            # Step 1: Preprocess data to extract contexts and targets
+            batch_contexts = []
+            batch_targets = []
+            batch_context_lengths = []
+            valid_indices = []
+            
+            # Process each example to extract context and target
+            for i, text in enumerate(input_batch):
                 token_ids = text.cpu().numpy().tolist()
-               
                 original_text = tokenizer.decode(token_ids, skip_special_tokens=True)
                 
-                # Format check and processing
+                # Standardize the text format
                 pairs = original_text.split(';')
                 standardized_pairs = []
                 
                 for pair in pairs:
                     if not pair.strip():
                         continue
-                        
-                    # Check if the pair has a comma
                     if ',' in pair:
                         values = pair.split(',')
                         if len(values) == 2:
-                            # Ensure each value has a leading 0 if it starts with a decimal point
                             x_val = values[0].strip()
                             y_val = values[1].strip()
                             
@@ -116,17 +119,11 @@ def evaluate_model(model, val_loader, tokenizer, context_ratio=0.8):
                             standardized_pairs.append(f"{x_val},{y_val}")
                 
                 if not standardized_pairs:
-                    print("No valid pairs found. Skipping...")
                     continue
-                    
-                # Join the standardized pairs
-                standardized_text = ';'.join(standardized_pairs)
-        
                 
                 # Split into context and target
                 split_index = int(len(standardized_pairs) * context_ratio)
                 if split_index == 0:
-                    print("Split index is 0, not enough data. Skipping...")
                     continue
                 
                 context_pairs = standardized_pairs[:split_index]
@@ -136,36 +133,56 @@ def evaluate_model(model, val_loader, tokenizer, context_ratio=0.8):
                 target_text = ';'.join(target_pairs)
                 
                 if not context_text or not target_text:
-                    print("Empty context or target. Skipping...")
                     continue
                 
-                # Tokenize the context
-                context_tokenized = tokenizer(context_text, return_tensors="pt", add_special_tokens=False)["input_ids"].squeeze(0)
+                # Store the valid example
+                batch_contexts.append(context_text)
+                batch_targets.append(target_text)
+                valid_indices.append(i)
+            
+            if not batch_contexts:
+                continue
+            
+            # Step 2: Tokenize all contexts in a batch
+            encoded_contexts = tokenizer(
+                batch_contexts,
+                return_tensors="pt",
+                padding=True,
+                add_special_tokens=False
+            ).to(model.device)
+            
+            input_ids = encoded_contexts["input_ids"]
+            attention_mask = encoded_contexts["attention_mask"]
+            
+            # Keep track of original context lengths for extracting generations
+            context_lengths = attention_mask.sum(dim=1).tolist()
+            
+            # Step 3: Generate completions for the whole batch at once
+            outputs = model.generate(
+                input_ids=input_ids,
+                attention_mask=attention_mask,
+                max_length=input_ids.shape[1] + 200,  # Allow reasonable generation length
+                num_return_sequences=1,
+                do_sample=False,  # Use greedy decoding
+                pad_token_id=tokenizer.pad_token_id,
+                use_cache=True,    # Enable KV caching for faster generation
+                return_dict_in_generate=True,
+                output_scores=False
+            )
+            
+            generated_sequences = outputs.sequences
+            
+            # Step 4: Process each generated sequence and corresponding target
+            for i, (context_length, target_text) in enumerate(zip(context_lengths, batch_targets)):
+                # Extract only the newly generated tokens
+                generated_ids = generated_sequences[i, context_length:]
                 
-                # Process this example individually
-                context_tensor = context_tokenized.unsqueeze(0).to(model.device)
-              
-                # Generate predictions
-                outputs = model.generate(
-                    input_ids=context_tensor,
-                    max_length=len(context_tokenized) + 200,  # Allow reasonable generation length
-                    num_return_sequences=1,
-                    do_sample=False,  # Use greedy decoding
-                    pad_token_id=tokenizer.pad_token_id
-                )
-                
-                # Extract only the newly generated tokens (skip the context)
-                predicted_ids = outputs[0, len(context_tokenized):]
-                
-                if predicted_ids.numel() == 0:
-                    print("Model generated empty output. Skipping this example.")
+                if generated_ids.numel() == 0:
                     continue
-                    
-                # Convert token IDs back to text
-                predicted_text = tokenizer.decode(predicted_ids, skip_special_tokens=True)
                 
-
-                # Manually decode the sequences instead of using preprocessor
+                predicted_text = tokenizer.decode(generated_ids, skip_special_tokens=True)
+                
+                # Parse target values
                 target_values_list = []
                 for timestep in target_text.split(';'):
                     if not timestep.strip():
@@ -179,6 +196,7 @@ def evaluate_model(model, val_loader, tokenizer, context_ratio=0.8):
                     except:
                         continue
                 
+                # Parse predicted values
                 predicted_values_list = []
                 for timestep in predicted_text.split(';'):
                     if not timestep.strip():
@@ -193,14 +211,13 @@ def evaluate_model(model, val_loader, tokenizer, context_ratio=0.8):
                         continue
                 
                 if not target_values_list or not predicted_values_list:
-                    print("Failed to decode valid values. Skipping...")
                     continue
                 
                 # Convert to numpy arrays
                 target_values = np.array(target_values_list)
                 predicted_values = np.array(predicted_values_list)
                 
-                # If sequences have different lengths, truncate to match
+                # Match sequence lengths
                 min_length = min(len(target_values), len(predicted_values))
                 target_values = target_values[:min_length]
                 predicted_values = predicted_values[:min_length]
@@ -208,16 +225,14 @@ def evaluate_model(model, val_loader, tokenizer, context_ratio=0.8):
                 all_targets.append(target_values)
                 all_predictions.append(predicted_values)
 
-
     if not all_targets or not all_predictions:
         print("No valid predictions were made. Cannot calculate metrics.")
         return {"MSE": None, "MAE": None, "R²": None}
         
-    # Convert to arrays for calculation
+    # Calculate metrics on all data at once
     all_targets = np.vstack(all_targets)
     all_predictions = np.vstack(all_predictions)
     
-    # Calculate metrics
     mse = np.mean((all_targets - all_predictions) ** 2)
     mae = np.mean(np.abs(all_targets - all_predictions))
     
@@ -234,13 +249,16 @@ def evaluate_model(model, val_loader, tokenizer, context_ratio=0.8):
     return result
 
 
-model, tokenizer = load_qwen()
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
+model, tokenizer = load_qwen()
+model = model.to(device)
+print(f"Model is now on: {next(model.parameters()).device}")
 # Define Hyperparameter Search Space
 lora_ranks = [2, 4, 8]
 learning_rates = [1e-5, 5e-5, 1e-4]
 context_lengths = [128, 512, 768]
-num_folds = 5  
+num_folds = 3
 
 best_hyperparams = None
 best_val_score = float("inf")
@@ -251,108 +269,90 @@ all_texts = json.load(open("results/processed_all_traj.json"))
 max_ctx_length = 256
 all_input_ids = process_sequences(all_texts, tokenizer, max_ctx_length, stride=max_ctx_length // 2)
 
-# Split into Training (80%) and Testing (20%)
-test_size = 0.2
-train_input_ids, test_input_ids = train_test_split(all_input_ids, test_size=test_size, random_state=42)
+# Create train/validation/test splits with proportions 0.6/0.2/0.2
+train_input_ids, temp_input_ids = train_test_split(all_input_ids, test_size=0.4, random_state=42)
+val_input_ids, test_input_ids = train_test_split(temp_input_ids, test_size=0.5, random_state=42)
 
-# Create Test Dataset
+train_dataset = TensorDataset(train_input_ids)
+val_dataset = TensorDataset(val_input_ids)
 test_dataset = TensorDataset(test_input_ids)
-test_loader = DataLoader(test_dataset, batch_size=2, shuffle=False)
 
-# Initialize K-Fold Cross-Validation
-kf = KFold(n_splits=num_folds, shuffle=True, random_state=42)
+train_loader = DataLoader(train_dataset, batch_size=8, shuffle=True)
+val_loader = DataLoader(val_dataset, batch_size=8, shuffle=False)
+test_loader = DataLoader(test_dataset, batch_size=8, shuffle=False)
+
 model_performance = {}
 for lora_rank in lora_ranks:
     for learning_rate in learning_rates:
         print(f"\n=== Training LoRA Rank {lora_rank}, LR {learning_rate} ===")
-        fold_metrics = []
 
-        for fold, (train_idx, val_idx) in enumerate(kf.split(train_input_ids)):
-            print(f"\n--- Fold {fold + 1} / {num_folds} ---")
-
-            # Create Train/Validation Splits for this fold
-            train_dataset = Subset(TensorDataset(train_input_ids), train_idx)
-            val_dataset = Subset(TensorDataset(train_input_ids), val_idx)
-
-            train_loader = DataLoader(train_dataset, batch_size=2, shuffle=True)
-            val_loader = DataLoader(val_dataset, batch_size=2, shuffle=False)
-
-            # Reinitialize Model & Optimizer
-            model, tokenizer = load_qwen()
-            for param in model.parameters():
-                param.requires_grad = False
-
-            optimizer = torch.optim.Adam((p for p in model.parameters() if p.requires_grad), lr=learning_rate)
+        model, tokenizer = load_qwen()
+        model = model.to(device)
+        for param in model.parameters():
+            param.requires_grad = False
 
 
-
-            # Apply LoRA modifications
-            for layer in model.model.layers:
-                layer.self_attn.q_proj = LoRALinear(layer.self_attn.q_proj, r=lora_rank)
-                layer.self_attn.v_proj = LoRALinear(layer.self_attn.v_proj, r=lora_rank)
-
+        # Apply LoRA modifications
+        for layer in model.model.layers:
+            layer.self_attn.q_proj = LoRALinear(layer.self_attn.q_proj, r=lora_rank)
+            layer.self_attn.v_proj = LoRALinear(layer.self_attn.v_proj, r=lora_rank)
 
 
-            # Use Accelerator for multi-GPU support
-            accelerator = Accelerator()
-            model, optimizer, train_loader = accelerator.prepare(model, optimizer, train_loader)
+        optimizer = torch.optim.Adam((p for p in model.parameters() if p.requires_grad), lr=learning_rate)
+        # Use Accelerator for multi-GPU support
+        accelerator = Accelerator()
+        model, optimizer, prepared_train_loader = accelerator.prepare(model, optimizer, train_loader)
 
             # Training Loop
-            model.train()
-            steps = 0
-            max_steps_per_fold = 2000  # Adjust as needed
-            pbar = tqdm(total=max_steps_per_fold)
+        model.train()
+        steps = 0
+        max_steps = 10000  # Adjust as needed
+        pbar = tqdm(total=max_steps)
 
-            while steps < max_steps_per_fold:
-                progress_bar = tqdm(train_loader, desc=f"Fold {fold + 1} - Steps {steps}")
-                for (batch,) in progress_bar:
-                    optimizer.zero_grad()
-                    outputs = model(batch, labels=batch)
-                    loss = outputs.loss
-                    accelerator.backward(loss)
-                    optimizer.step()
-                    steps += 1
+        while steps < max_steps:
+            progress_bar = tqdm(prepared_train_loader, desc=f"Steps {steps}")
+            for (batch,) in progress_bar:
+                optimizer.zero_grad()
+                outputs = model(batch, labels=batch)
+                loss = outputs.loss
+                accelerator.backward(loss)
+                optimizer.step()
+                steps += 1
 
-                    progress_bar.set_postfix(loss=loss.item())
-                    if steps >= max_steps_per_fold:
-                        break
+                progress_bar.set_postfix(loss=loss.item())
+                if steps >= max_steps:
+                    break
 
-                    pbar.update(1)
-
-            # Evaluate Model on Validation Set
-            model.eval()
-            fold_result = evaluate_model(model, val_loader, tokenizer)
-            fold_metrics.append(fold_result)
-            print(f"Fold {fold + 1} Results: {fold_result}")
-
-        # Compute Average Metrics Across Folds
-        avg_metrics = {
-            "MSE": np.mean([m["MSE"] for m in fold_metrics]),
-            "MAE": np.mean([m["MAE"] for m in fold_metrics]),
-            "R²": np.mean([m["R²"] for m in fold_metrics]),
-        }
+                pbar.update(1)
 
     
-        model.eval()
-        test_results = evaluate_model(model, test_loader, tokenizer)
+        # val_results = evaluate_model(model, val_loader, tokenizer)
+        val_results = evaluate_model_batched(model, val_loader, tokenizer)
+        print(f"Validation Results: {val_results}")
 
-        # Store test performance
+        # Evaluate Model on Test Set
+        # test_results = evaluate_model(model, test_loader, tokenizer)
+        test_results = evaluate_model_batched(model, test_loader, tokenizer)
+        print(f"Test Results: {test_results}")
+
+
         model_key = f"lora_r{lora_rank}_lr{learning_rate}"
         model_performance[model_key] = {
-            "Training + Validation Metrics": avg_metrics,
+            "Validation Metrics": val_results,
             "Test Metrics": test_results,
             "LoRA Rank": lora_rank,
             "Learning Rate": learning_rate,
         }
-        if test_results["MSE"] < best_val_score:
-            best_val_score = test_results["MSE"]
+        
+        if val_results["MSE"] < best_val_score:
+            best_val_score = val_results["MSE"]
             best_hyperparams = (lora_rank, learning_rate)
             save_path = "results/lora_model_hyper.pth"
             torch.save(model.state_dict(), save_path)
             json.dump({"best_hyperparams": best_hyperparams}, open("results/best_hyperparams.json", "w"), indent=4)
             print(f"Model saved to {save_path}")
 
-saved_path = "results/kfold_lora_test_competition.json"
+saved_path = "results/lora_test_competition.json"
 with open(saved_path, "w") as f:
     json.dump(model_performance, f, indent=4)
 
@@ -371,7 +371,8 @@ max_steps_context = 2000
 for context_length in context_lengths:
     print(f"\n=== Testing Context Length {context_length} ===")
     model, tokenizer = load_qwen()
-    optimizer = torch.optim.Adam((p for p in model.parameters() if p.requires_grad), lr=best_learning_rate)
+    model = model.to(device)
+    
 
     for param in model.parameters():
         param.requires_grad = False
@@ -380,8 +381,9 @@ for context_length in context_lengths:
         layer.self_attn.q_proj = LoRALinear(layer.self_attn.q_proj, r=best_lora_rank)
         layer.self_attn.v_proj = LoRALinear(layer.self_attn.v_proj, r=best_lora_rank)
 
+    optimizer = torch.optim.Adam((p for p in model.parameters() if p.requires_grad), lr=best_learning_rate)
     accelerator = Accelerator()
-    model, optimizer, train_loader = accelerator.prepare(model, optimizer, train_loader)
+    model, optimizer, prepared_train_loader = accelerator.prepare(model, optimizer, train_loader)
 
     model.train()
     steps = 0
@@ -389,7 +391,7 @@ for context_length in context_lengths:
    
 
     while steps < max_steps_context:
-        progress_bar = tqdm(train_loader, desc=f"Steps {steps}")
+        progress_bar = tqdm(prepared_train_loader, desc=f"Steps {steps}")
         for (batch,) in progress_bar:
             optimizer.zero_grad()
             outputs = model(batch, labels=batch)
@@ -403,8 +405,9 @@ for context_length in context_lengths:
             pbar.update(1)
 
 
-    model.eval()
-    context_metrics = evaluate_model(model, test_loader, tokenizer)
+
+    # context_metrics = evaluate_model(model, test_loader, tokenizer)
+    context_metrics = evaluate_model_batched(model, test_loader, tokenizer)
     # context_metrics["FLOPs"] = total_flops
 
     model_performance[f"context_len{context_length}"] = context_metrics

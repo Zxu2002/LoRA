@@ -1,4 +1,3 @@
-
 from src.preprocessor import LLMTIMEPreprocessor, determine_scaling_factor
 import torch
 import numpy as np
@@ -66,6 +65,9 @@ if __name__ == "__main__":
         layer.self_attn.v_proj = LoRALinear(layer.self_attn.v_proj, r=lora_rank)
 
     # Load the saved parameters
-    model.load_state_dict(torch.load("results/lora_model.pth"))
+    # model.load_state_dict(torch.load("results/lora_model.pth"))
+    model.load_state_dict(torch.load("results/lora_model.pth", map_location=torch.device('cpu')))
 
     print("Model parameters loaded successfully!")
+
+    plot_trajectory(model, trajectory_id=0, tokenizer=tokenizer, context_length=80, forecast_length=20)

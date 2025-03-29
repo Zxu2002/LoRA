@@ -1,2 +1,7 @@
 .venv/
 .DS_Store
+.tmp.driveupload/
+.tmp.gdrive-upload/
+.tmp.drivedownload
+__pycache__
+*.pth
