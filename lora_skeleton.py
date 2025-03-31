@@ -83,15 +83,16 @@ if __name__ == "__main__":
                 all_input_ids.append(chunk)
         return torch.stack(all_input_ids)
 
-    def evaluate_model(model, val_loader, tokenizer, context_ratio=0.8):
+    def evaluate_model_batched(model, val_loader, tokenizer, context_ratio=0.8, batch_size=8):
         """
-        Evaluate the model on validation data and compute metrics.
+        Evaluate the model on validation data using batched processing.
         
         Parameters:
             - model: The model to evaluate
             - val_loader: DataLoader containing validation data
             - tokenizer: Tokenizer used to decode predicted token IDs
             - context_ratio: Ratio of sequence to use as context
+            - batch_size: Size of batches for generation
         
         Returns:
             - result: Dictionary containing evaluation metrics
@@ -99,35 +100,35 @@ if __name__ == "__main__":
         model.eval()
         all_targets = []
         all_predictions = []
-        print("Evaluating model...")
+        print("Evaluating model with batched processing...")
         scaling_factor = json.load(open("results/scaling_factor.json"))['scaling_factor']
 
         with torch.no_grad():
-            for batch_idx, batch in enumerate(tqdm(val_loader)):
-                if batch[0].numel() == 0:
-                    print("Empty batch detected. Skipping...")
+            for batch_idx, (input_batch,) in enumerate(tqdm(val_loader)):
+                if input_batch.numel() == 0:
                     continue
-                    
-                # Process each example in the batch individually
-                for example_idx, text in enumerate(batch[0]):
-                    # Decode the sequence
-                    token_ids = text.cpu().numpy().tolist()
                 
+                # Step 1: Preprocess data to extract contexts and targets
+                batch_contexts = []
+                batch_targets = []
+                batch_context_lengths = []
+                valid_indices = []
+                
+                # Process each example to extract context and target
+                for i, text in enumerate(input_batch):
+                    token_ids = text.cpu().numpy().tolist()
                     original_text = tokenizer.decode(token_ids, skip_special_tokens=True)
                     
-                    # Format check and processing
+                    # Standardize the text format
                     pairs = original_text.split(';')
                     standardized_pairs = []
                     
                     for pair in pairs:
                         if not pair.strip():
                             continue
-                            
-                        # Check if the pair has a comma
                         if ',' in pair:
                             values = pair.split(',')
                             if len(values) == 2:
-                                # Ensure each value has a leading 0 if it starts with a decimal point
                                 x_val = values[0].strip()
                                 y_val = values[1].strip()
                                 
@@ -139,17 +140,11 @@ if __name__ == "__main__":
                                 standardized_pairs.append(f"{x_val},{y_val}")
                     
                     if not standardized_pairs:
-                        print("No valid pairs found. Skipping...")
                         continue
-                        
-                    # Join the standardized pairs
-                    standardized_text = ';'.join(standardized_pairs)
-            
                     
                     # Split into context and target
                     split_index = int(len(standardized_pairs) * context_ratio)
                     if split_index == 0:
-                        print("Split index is 0, not enough data. Skipping...")
                         continue
                     
                     context_pairs = standardized_pairs[:split_index]
@@ -159,36 +154,56 @@ if __name__ == "__main__":
                     target_text = ';'.join(target_pairs)
                     
                     if not context_text or not target_text:
-                        print("Empty context or target. Skipping...")
                         continue
                     
-                    # Tokenize the context
-                    context_tokenized = tokenizer(context_text, return_tensors="pt", add_special_tokens=False)["input_ids"].squeeze(0)
-                    
-                    # Process this example individually
-                    context_tensor = context_tokenized.unsqueeze(0).to(model.device)
+                    # Store the valid example
+                    batch_contexts.append(context_text)
+                    batch_targets.append(target_text)
+                    valid_indices.append(i)
                 
-                    # Generate predictions
-                    outputs = model.generate(
-                        input_ids=context_tensor,
-                        max_length=len(context_tokenized) + 200,  # Allow reasonable generation length
-                        num_return_sequences=1,
-                        do_sample=False,  # Use greedy decoding
-                        pad_token_id=tokenizer.pad_token_id
-                    )
+                if not batch_contexts:
+                    continue
+                
+                # Step 2: Tokenize all contexts in a batch
+                encoded_contexts = tokenizer(
+                    batch_contexts,
+                    return_tensors="pt",
+                    padding=True,
+                    add_special_tokens=False
+                ).to(model.device)
+                
+                input_ids = encoded_contexts["input_ids"]
+                attention_mask = encoded_contexts["attention_mask"]
+                
+                # Keep track of original context lengths for extracting generations
+                context_lengths = attention_mask.sum(dim=1).tolist()
+                
+                # Step 3: Generate completions for the whole batch at once
+                outputs = model.generate(
+                    input_ids=input_ids,
+                    attention_mask=attention_mask,
+                    max_length=input_ids.shape[1] + 200,  # Allow reasonable generation length
+                    num_return_sequences=1,
+                    do_sample=False,  # Use greedy decoding
+                    pad_token_id=tokenizer.pad_token_id,
+                    use_cache=True,    # Enable KV caching for faster generation
+                    return_dict_in_generate=True,
+                    output_scores=False
+                )
+                
+                generated_sequences = outputs.sequences
+                
+                # Step 4: Process each generated sequence and corresponding target
+                for i, (context_length, target_text) in enumerate(zip(context_lengths, batch_targets)):
+                    # Extract only the newly generated tokens
+                    generated_ids = generated_sequences[i, context_length:]
                     
-                    # Extract only the newly generated tokens (skip the context)
-                    predicted_ids = outputs[0, len(context_tokenized):]
-                    
-                    if predicted_ids.numel() == 0:
-                        print("Model generated empty output. Skipping this example.")
+                    if generated_ids.numel() == 0:
                         continue
-                        
-                    # Convert token IDs back to text
-                    predicted_text = tokenizer.decode(predicted_ids, skip_special_tokens=True)
                     
-
-                    # Manually decode the sequences instead of using preprocessor
+                    predicted_text = tokenizer.decode(generated_ids, skip_special_tokens=True)
+                    
+                    # Parse target values
                     target_values_list = []
                     for timestep in target_text.split(';'):
                         if not timestep.strip():
@@ -202,6 +217,7 @@ if __name__ == "__main__":
                         except:
                             continue
                     
+                    # Parse predicted values
                     predicted_values_list = []
                     for timestep in predicted_text.split(';'):
                         if not timestep.strip():
@@ -216,14 +232,13 @@ if __name__ == "__main__":
                             continue
                     
                     if not target_values_list or not predicted_values_list:
-                        print("Failed to decode valid values. Skipping...")
                         continue
                     
                     # Convert to numpy arrays
                     target_values = np.array(target_values_list)
                     predicted_values = np.array(predicted_values_list)
                     
-                    # If sequences have different lengths, truncate to match
+                    # Match sequence lengths
                     min_length = min(len(target_values), len(predicted_values))
                     target_values = target_values[:min_length]
                     predicted_values = predicted_values[:min_length]
@@ -231,16 +246,14 @@ if __name__ == "__main__":
                     all_targets.append(target_values)
                     all_predictions.append(predicted_values)
 
-
         if not all_targets or not all_predictions:
             print("No valid predictions were made. Cannot calculate metrics.")
             return {"MSE": None, "MAE": None, "R²": None}
             
-        # Convert to arrays for calculation
+        # Calculate metrics on all data at once
         all_targets = np.vstack(all_targets)
         all_predictions = np.vstack(all_predictions)
         
-        # Calculate metrics
         mse = np.mean((all_targets - all_predictions) ** 2)
         mae = np.mean(np.abs(all_targets - all_predictions))
         
@@ -326,7 +339,7 @@ if __name__ == "__main__":
 
         # Evaluation on Validation Set
         model.eval()
-        fold_result = evaluate_model(model, val_loader, tokenizer)
+        fold_result = evaluate_model_batched(model, val_loader, tokenizer)
         fold_metrics.append(fold_result)
         print(f"Fold {fold + 1} Results: {fold_result}")
 

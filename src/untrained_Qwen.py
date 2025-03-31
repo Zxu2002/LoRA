@@ -12,7 +12,7 @@ from tqdm import tqdm
 # Import the model 
 from qwen import load_qwen
 from transformers import AutoTokenizer
-from .preprocessor import LLMTIMEPreprocessor, determine_scaling_factor
+from preprocessor import LLMTIMEPreprocessor, determine_scaling_factor
 
 
 # qwen, tokenizer = load_qwen()
@@ -81,7 +81,7 @@ def evaluate_untrained_model(ratio=0.8,test_size=100,context_length = 80, foreca
             inputs = tokenizer(encoded_input, return_tensors="pt")
             inputs = {k: v.to(device) for k, v in inputs.items()}
             # inputs = {k: v.to(qwen.device) for k, v in inputs}
-
+            print(len(inputs["input_ids"]))
             # Generate continuation
             output_ids = qwen.generate(
                 input_ids=inputs["input_ids"],

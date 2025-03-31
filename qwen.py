@@ -19,3 +19,8 @@ def load_qwen():
     model.lm_head.bias.requires_grad = True
 
     return model, tokenizer
+
+if __name__ == "__main__":
+    model, tokenizer = load_qwen()
+    print("Model and tokenizer loaded successfully.")
+    print(model)

@@ -33,41 +33,42 @@ def calculate_qwen_flops(
     #FLOPS for a single layer
     
     # RMSNorm (input_layernorm)
-    rms_norm_flops = seq_length * (2 * hidden_dim + 10)  # +10 for square root
+    rms_norm_flops = 4 * seq_length *  hidden_dim + 10 # +10 for square root
     
     # Query Projection: d_model -> d_model
     q_proj_flops = seq_length * hidden_dim * (2 * hidden_dim - 1)
     
     # Key/Value Projection: d_model -> d_kv
-    k_proj_flops = seq_length * hidden_dim * (2 * kv_dim - 1)
     
-    v_proj_flops = seq_length * hidden_dim * (2 * kv_dim - 1)
+    k_proj_flops = seq_length * kv_dim * (2 * hidden_dim - 1)
+    
+    v_proj_flops = seq_length * kv_dim * (2 * hidden_dim - 1)
     
     # Rotary Position Embeddings
     rotary_flops = seq_length * 2 * hidden_dim
     
     # Attention Score Computation
     # Q*K^T: L × n_heads × (L × (2*d_kv/n_heads - 1))
-    qk_flops = seq_length * seq_length * 254  # Simplified from above formula
+    qk_flops = seq_length *7 * (seq_length * 128)
     
-    scaling_flops = seq_length * seq_length
+    scaling_flops = seq_length * 7 * seq_length
     
-    softmax_flops = seq_length * (seq_length + 10)  # +10 for exponential
+    softmax_flops = seq_length * 7 *(seq_length + 10)  # +10 for exponential
     
     # Attention Output
     # Attention * V: Same as QK^T
-    attn_v_flops = seq_length * seq_length * 254
+    attn_v_flops = seq_length * seq_length * 7 * 128
     
     o_proj_flops = seq_length * hidden_dim * (2 * hidden_dim - 1)
     
     post_rms_norm_flops = rms_norm_flops
     
     # MLP Components
-    gate_proj_flops = seq_length * hidden_dim * (2 * mlp_dim - 1)
-    up_proj_flops = seq_length * hidden_dim * (2 * mlp_dim - 1)
+    gate_proj_flops = seq_length *mlp_dim  * (2 * hidden_dim  - 1)
+    up_proj_flops = seq_length *  mlp_dim* (2 * hidden_dim - 1) 
     
     # SwiGLU activation (SiLU + multiplication)
-    swiglu_flops = seq_length * mlp_dim * 11  
+    swiglu_flops = seq_length * mlp_dim * 14
 
     # Down Projection
     down_proj_flops = seq_length * mlp_dim * (2 * hidden_dim - 1)
@@ -92,7 +93,6 @@ def calculate_qwen_flops(
     
     # Total for all layers
     total_layer_flops = num_layers * layer_flops
-    
 
     # Final Layer Norm
     final_rms_norm_flops = seq_length * (2 * hidden_dim + 10)
@@ -113,7 +113,7 @@ def calculate_qwen_flops(
     return total_flops
 
 
-def calculate_flops(context_length=50):
+def calculate_flops(context_length=80):
     ''' Evaluate the untrained model on the Lotka-Volterra dataset
     Parameters:
         - context_length: The length of the context segment
@@ -344,7 +344,7 @@ def compute_hyperparameter_search_flops(
 # Example usage
 if __name__ == "__main__":
     qwen_flops, qwen_input_length = calculate_flops()
-    print(qwen_flops)
+    print(calculate_qwen_flops(256))
     # Calculate FLOPs for a single step with LoRA
     #Lora skeleton flops:
     max_ctx_length = 256
