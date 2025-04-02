@@ -347,11 +347,13 @@ for lora_rank in lora_ranks:
         if val_results["MSE"] < best_val_score:
             best_val_score = val_results["MSE"]
             best_hyperparams = (lora_rank, learning_rate)
-            save_path = "results/lora_model_hyper.pth"
-            torch.save(model.state_dict(), save_path)
-            json.dump({"best_hyperparams": best_hyperparams}, open("results/best_hyperparams.json", "w"), indent=4)
-            print(f"Model saved to {save_path}")
+            best_model = model 
 
+            json.dump({"best_hyperparams": best_hyperparams}, open("results/best_hyperparams.json", "w"), indent=4)
+        
+
+save_path = "results/lora_model_hyper.pth"
+torch.save(best_model.state_dict(), save_path)
 saved_path = "results/lora_test_competition.json"
 with open(saved_path, "w") as f:
     json.dump(model_performance, f, indent=4)
@@ -366,7 +368,7 @@ best_lora_rank, best_learning_rate = best_hyperparams
 results["best_hyperparams"] = best_hyperparams
 print(f"\nBest Hyperparameters: Rank={best_lora_rank}, LR={best_learning_rate}")
 max_steps_context = 2000
-
+min_mse_context = float("inf")
 # Re-train Model with Best Hyperparameters
 for context_length in context_lengths:
     print(f"\n=== Testing Context Length {context_length} ===")
@@ -408,6 +410,11 @@ for context_length in context_lengths:
 
     # context_metrics = evaluate_model(model, test_loader, tokenizer)
     context_metrics = evaluate_model_batched(model, test_loader, tokenizer)
+
+    if context_metrics["MSE"] < min_mse_context:
+        min_mse_context = context_metrics["MSE"]
+        best_model = model
+        min_context_length = context_length
     # context_metrics["FLOPs"] = total_flops
 
     model_performance[f"context_len{context_length}"] = context_metrics
@@ -416,3 +423,7 @@ for context_length in context_lengths:
 saved_path = "results/lora_hyperparam_search.json"
 with open(saved_path, "w") as f:
     json.dump(model_performance, f, indent=4)
+
+# Save the best model
+save_path = "results/lora_model_final_cxt.pth"
+torch.save(best_model.state_dict(), save_path)

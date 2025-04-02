@@ -1,15 +1,66 @@
 # M2 Coursework: LoRA Fine-Tuning for Time Series Forecasting
 
-Please open the file `main.pdf` for the coursework instructions. Good luck and have fun!
+This repository contains code and report for the M2 coursework. 
 
-## Clarifications
 
-**Q: Are the differential equations used to generate the Lotka-Volterra data the standard equations or modified versions? Are the original parameters available and should they be used as model inputs?**
+## Setting up the environment 
 
-A:
+### Prerequisites
 
-The specific differential equations used to generate the data are not relevant. You should treat the dataset as observations you have been given and are now trying to model with a time series forecast approach.
+- Python 3.9.6
+- `pip` (Python package installer)
 
-The idea is that the LLM will pick up on the patterns from its input and be able to infer any relevant parameters in the underlying dynamics, similar to the approach in the LLMTIME paper.
+### Setting Up a Virtual Environment
 
-This is similar to how LLMs work in practice. They predict the next token based on the previous sequence of tokens. They don't need structured inputs describing if the user is happy or sad. They just infer it all from the context.
+1. Open a terminal and navigate to root of this directory:
+
+
+2. Create a virtual environment:
+    try:
+    ```sh
+    python -m venv venv
+    ```
+    if above does not work: 
+    ```sh
+    python3 -m venv venv
+    ```
+
+3. Activate the virtual environment:
+
+    - On macOS and Linux:
+
+        ```sh
+        source venv/bin/activate
+        ```
+
+    - On Windows:
+
+        ```sh
+        .\venv\Scripts\activate
+        ```
+
+### Installing Dependencies
+
+Once the virtual environment is activated, install the required packages using `pip`:
+
+```sh
+pip install -r requirements.txt
+```
+
+## Usage
+All scripts should be run directly from the root directory.
+
+### Key Scripts in Root Directory
+
+- **`lora_hyperparameter.py`** – Runs hyperparameter tuning for the model.
+- **`lora_skeleton.py`** – Provides the basic structure of the LoRA model.
+- **`lora_final.py`** – Trains the model using the optimal hyperparameters.
+
+### Scripts in `src/` Directory
+
+- **`calculate_Qwen_result.py`** – Performs numerical analysis of metrics for the untrained Qwen model.
+- **`FLOPs.py`** – Calculates the FLOPs used by each model.
+- **`preprocessor.py`** – Defines the data preprocessing pipeline.
+- **`untrained_Qwen.py`** – Loads and evaluates the untrained Qwen model.
+
+

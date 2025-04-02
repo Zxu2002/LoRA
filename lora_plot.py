@@ -6,7 +6,7 @@ from src.untrained_Qwen import load_data
 from qwen import load_qwen
 from lora_skeleton import LoRALinear
 
-def plot_trajectory(model, trajectory_id, tokenizer, context_length=80, forecast_length = 20):
+def plot_trajectory(model, trajectory_id, tokenizer, context_length=80, forecast_length = 20,save_path="graphs/lora_skele_trajectory.png"):
     model.eval()
     trajectories, time_points = load_data()
     scaling_factor = determine_scaling_factor(trajectories[:])
@@ -17,16 +17,8 @@ def plot_trajectory(model, trajectory_id, tokenizer, context_length=80, forecast
     encoded_input = preprocessor.encode_sequence(input_segment)
     inputs = tokenizer(encoded_input, return_tensors="pt")
     inputs = {k: v.to(model.device) for k, v in inputs.items()}
-    outputs = model.generate(
-                    input_ids=inputs["input_ids"],
-                    max_length= 200,  # Allow reasonable generation length
-                    num_return_sequences=1,
-                    do_sample=False,  # Use greedy decoding
-                    pad_token_id=tokenizer.pad_token_id
-                )
-                
+    outputs = model.generate(**inputs,max_length= 1000)     
     generated_text = tokenizer.decode(outputs[0], skip_special_tokens=True)
-
     prompt_text = tokenizer.decode(inputs["input_ids"][0], skip_special_tokens=True)
     generated_sequence = generated_text[len(prompt_text):]
     forecast_parts = [part.strip() for part in generated_sequence.split(';') if part.strip()]
@@ -49,7 +41,7 @@ def plot_trajectory(model, trajectory_id, tokenizer, context_length=80, forecast
 
     plt.tight_layout()
     fig.suptitle("Trajectory {}".format(trajectory_id))
-    plt.savefig("graphs/lora_skele_trajectory_{}.png".format(trajectory_id))
+    plt.savefig(save_path)
     plt.show()
 
 if __name__ == "__main__":
@@ -71,3 +63,15 @@ if __name__ == "__main__":
     print("Model parameters loaded successfully!")
 
     plot_trajectory(model, trajectory_id=0, tokenizer=tokenizer, context_length=80, forecast_length=20)
+
+    model.load_state_dict(torch.load("results/lora_model_hyper.pth", map_location=torch.device('cpu')))
+    print("Model parameters loaded successfully!")
+    plot_trajectory(model, trajectory_id=0, tokenizer=tokenizer, context_length=80, forecast_length=20,save_path="results/lora_hyper.png")
+
+    model.load_state_dict(torch.load("results/lora_model_final.pth", map_location=torch.device('cpu')))
+    print("Model parameters loaded successfully!")
+    plot_trajectory(model, trajectory_id=0, tokenizer=tokenizer, context_length=80, forecast_length=20,save_path="results/lora_final.png")
+
+    model.load_state_dict(torch.load("results/lora_model_final_cxt.pth", map_location=torch.device('cpu')))
+    print("Model parameters loaded successfully!")
+    plot_trajectory(model, trajectory_id=0, tokenizer=tokenizer, context_length=80, forecast_length=20,save_path="results/lora_final_cxt.png")

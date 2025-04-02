@@ -175,25 +175,25 @@ if __name__ == "__main__":
                 input_ids = encoded_contexts["input_ids"]
                 attention_mask = encoded_contexts["attention_mask"]
                 
-                # Keep track of original context lengths for extracting generations
+                
                 context_lengths = attention_mask.sum(dim=1).tolist()
                 
-                # Step 3: Generate completions for the whole batch at once
+                #  Generate completions for the whole batch at once
                 outputs = model.generate(
                     input_ids=input_ids,
                     attention_mask=attention_mask,
-                    max_length=input_ids.shape[1] + 200,  # Allow reasonable generation length
+                    max_length=input_ids.shape[1] + 200,  
                     num_return_sequences=1,
-                    do_sample=False,  # Use greedy decoding
+                    do_sample=False,  
                     pad_token_id=tokenizer.pad_token_id,
-                    use_cache=True,    # Enable KV caching for faster generation
+                    use_cache=True,   
                     return_dict_in_generate=True,
                     output_scores=False
                 )
                 
                 generated_sequences = outputs.sequences
                 
-                # Step 4: Process each generated sequence and corresponding target
+                # Process each generated sequence and corresponding target
                 for i, (context_length, target_text) in enumerate(zip(context_lengths, batch_targets)):
                     # Extract only the newly generated tokens
                     generated_ids = generated_sequences[i, context_length:]
@@ -234,7 +234,7 @@ if __name__ == "__main__":
                     if not target_values_list or not predicted_values_list:
                         continue
                     
-                    # Convert to numpy arrays
+                   
                     target_values = np.array(target_values_list)
                     predicted_values = np.array(predicted_values_list)
                     
@@ -274,8 +274,8 @@ if __name__ == "__main__":
     # Defines the maximum context length
     max_ctx_length = 256
 
-    test_size = 0.2  # 20% for testing
-    train_size = 1 - test_size  # 80% for training (used for K-Fold)
+    test_size = 0.2  
+    train_size = 1 - test_size 
 
     all_input_ids = process_sequences(all_texts, tokenizer, max_ctx_length, stride=max_ctx_length // 2)
     train_input_ids, test_input_ids = train_test_split(all_input_ids, test_size=test_size, random_state=42)
