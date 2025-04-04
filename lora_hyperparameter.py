@@ -306,7 +306,7 @@ for lora_rank in lora_ranks:
             # Training Loop
         model.train()
         steps = 0
-        max_steps = 10000  # Adjust as needed
+        max_steps = 4000
         pbar = tqdm(total=max_steps)
 
         while steps < max_steps:

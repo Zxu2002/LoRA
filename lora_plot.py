@@ -61,6 +61,16 @@ if __name__ == "__main__":
     model.load_state_dict(torch.load("results/lora_model.pth", map_location=torch.device('cpu')))
 
     print("Model parameters loaded successfully!")
+    model, tokenizer = load_qwen()
+
+    # Ensure LoRA is applied before loading the state dict
+    lora_rank = 8
+    for param in model.parameters():
+        param.requires_grad = False
+
+    for layer in model.model.layers:
+        layer.self_attn.q_proj = LoRALinear(layer.self_attn.q_proj, r=lora_rank)
+        layer.self_attn.v_proj = LoRALinear(layer.self_attn.v_proj, r=lora_rank)
 
     plot_trajectory(model, trajectory_id=0, tokenizer=tokenizer, context_length=80, forecast_length=20)
 

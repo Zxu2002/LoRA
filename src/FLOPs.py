@@ -3,8 +3,8 @@ import os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import torch
 import json
-from qwen import load_qwen
-from untrained_Qwen import load_data
+# from qwen import load_qwen
+# from untrained_Qwen import load_data
 from preprocessor import LLMTIMEPreprocessor
 
 def calculate_qwen_flops(
@@ -143,7 +143,8 @@ def calculate_lora_flops(
     hidden_dim=896,
     lora_rank=8,
     num_layers=24,
-    is_training=True,
+    is_training=True, 
+    kv_dim = 128
 ):
 
 
@@ -169,16 +170,14 @@ def calculate_lora_flops(
   
     
     # 1. First matrix multiplication: (seq_length × hidden_dim) @ (lora_rank × hidden_dim).T
-    lora_a_flops = seq_length * hidden_dim * (2 * lora_rank - 1)
-    
+    lora_a_flops = seq_length * lora_rank * (2 * hidden_dim  - 1)
+    lora_a_flops_v = seq_length * lora_rank * (2 * hidden_dim  - 1)
     # 2. Second matrix multiplication: (seq_length × lora_rank) @ (hidden_dim × lora_rank).T
-    lora_b_flops = seq_length * lora_rank * (2 * hidden_dim - 1)
-    
-    # Total FLOPs for one LoRA module
-    lora_module_flops = lora_a_flops + lora_b_flops
+    lora_b_flops = seq_length * hidden_dim * (2 * lora_rank - 1)
+    lora_b_flops_v = seq_length * kv_dim * (2 * lora_rank - 1)
     
     # Total LoRA FLOPs for one layer
-    lora_layer_flops = lora_module_flops * lora_modules_count
+    lora_layer_flops = lora_a_flops + lora_b_flops + lora_a_flops_v + lora_b_flops_v
     
     # Total LoRA FLOPs for all layers
     lora_forward_flops = lora_layer_flops * num_layers
@@ -257,12 +256,11 @@ def calculate_total_flops_with_lora(
     }
 
 def compute_hyperparameter_search_flops(
-    seq_length,
-    best_rank = 4,
+    best_rank = 8,
     best_ctx_len = 256, 
     lora_ranks=[2, 4, 8],
     learning_rates=[1e-5, 5e-5, 1e-4],
-    steps_per_config=2000,
+    steps_per_config=4000,
     num_folds=5,
     context_length_steps=2000,
     context_lengths=[128, 512, 768],
@@ -272,7 +270,6 @@ def compute_hyperparameter_search_flops(
     Calculate the total FLOPs for a hyperparameter search and final training.
     
     Parameters:
-        - seq_length: Base sequence length
         - lora_ranks: List of LoRA ranks to try
         - learning_rates: List of learning rates to try
         - steps_per_config: Steps per configuration in hyperparameter search
@@ -294,7 +291,7 @@ def compute_hyperparameter_search_flops(
             
             # Calculate FLOPs for this configuration with k-fold
             config_flops = calculate_total_flops_with_lora(
-                seq_length=seq_length,
+                seq_length=256,
                 lora_rank=rank,
                 num_steps=steps_per_config * num_folds,
                 is_training=True
@@ -343,13 +340,13 @@ def compute_hyperparameter_search_flops(
 
 # Example usage
 if __name__ == "__main__":
-    qwen_flops, qwen_input_length = calculate_flops()
+    # qwen_flops, qwen_input_length = calculate_flops()
     print(calculate_qwen_flops(256))
     # Calculate FLOPs for a single step with LoRA
     #Lora skeleton flops:
     max_ctx_length = 256
     lora_skeleton_flops = calculate_total_flops_with_lora(
-        seq_length=min(qwen_input_length, max_ctx_length),
+        seq_length=256,
         lora_rank=4,
         num_steps=1,
         is_training=True
@@ -361,9 +358,7 @@ if __name__ == "__main__":
     print(f"Total: {lora_skeleton_flops['total_flops_per_step']:,}")
     
     # Calculate FLOPs for a full hyperparameter search
-    search_flops = compute_hyperparameter_search_flops(
-        seq_length=min(qwen_input_length, max_ctx_length)
-    )
+    search_flops = compute_hyperparameter_search_flops()
     
 
     print("Total FLOPs for hyperparameter search:")

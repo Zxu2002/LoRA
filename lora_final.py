@@ -51,7 +51,6 @@ if __name__ == "__main__":
     lora_rank, learning_rate = json.load(open("results/best_hyperparams.json"))["best_hyperparams"]
 
     model, tokenizer = load_qwen()
-    lora_rank = 4
     for param in model.parameters():
         param.requires_grad = False
 
@@ -65,7 +64,7 @@ if __name__ == "__main__":
     all_texts = json.load(open("results/processed_all_traj.json"))
 
     # Modified tokenization with chunking
-    def process_sequences(texts, tokenizer, max_length=512, stride=256):
+    def process_sequences(texts, tokenizer, max_length=256, stride=256):
         all_input_ids = []
         for text in texts:
             # Apply Qwen's tokenization scheme to the text:
@@ -274,7 +273,7 @@ if __name__ == "__main__":
 
 
     # Defines the maximum context length
-    max_ctx_length = 768
+    max_ctx_length = 256
 
     test_size = 0.2  # 20% for testing
     train_size = 1 - test_size  # 80% for training (used for K-Fold)
