@@ -74,14 +74,14 @@ if __name__ == "__main__":
 
     plot_trajectory(model, trajectory_id=0, tokenizer=tokenizer, context_length=80, forecast_length=20)
 
-    model.load_state_dict(torch.load("results/lora_model_hyper.pth", map_location=torch.device('cpu')))
+    model.load_state_dict(torch.load("graphs/lora_model_hyper.pth", map_location=torch.device('cpu')))
     print("Model parameters loaded successfully!")
     plot_trajectory(model, trajectory_id=0, tokenizer=tokenizer, context_length=80, forecast_length=20,save_path="results/lora_hyper.png")
 
-    model.load_state_dict(torch.load("results/lora_model_final.pth", map_location=torch.device('cpu')))
+    model.load_state_dict(torch.load("graphs/lora_model_final.pth", map_location=torch.device('cpu')))
     print("Model parameters loaded successfully!")
     plot_trajectory(model, trajectory_id=0, tokenizer=tokenizer, context_length=80, forecast_length=20,save_path="results/lora_final.png")
 
-    model.load_state_dict(torch.load("results/lora_model_final_cxt.pth", map_location=torch.device('cpu')))
+    model.load_state_dict(torch.load("graphs/lora_model_final_cxt.pth", map_location=torch.device('cpu')))
     print("Model parameters loaded successfully!")
     plot_trajectory(model, trajectory_id=0, tokenizer=tokenizer, context_length=80, forecast_length=20,save_path="results/lora_final_cxt.png")
