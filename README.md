@@ -64,3 +64,5 @@ All scripts should be run directly from the root directory.
 - **`untrained_Qwen.py`** – Loads and evaluates the untrained Qwen model.
 
 
+### Declaration
+This repository was developed with the assistance from Anthropic’s Claude 3.5 Sonnet. Specifically, Claude was used to assist with debugging Python code implementations. All AI-generated suggestions were manually reviewed.

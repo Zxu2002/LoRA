@@ -113,31 +113,6 @@ def calculate_qwen_flops(
     return total_flops
 
 
-def calculate_flops(context_length=80):
-    ''' Evaluate the untrained model on the Lotka-Volterra dataset
-    Parameters:
-        - context_length: The length of the context segment
-    Returns:
-        - results: total number of flops 
-        - qwen_seq_length: The length of the qwen sequence
-    '''
-    qwen, tokenizer = load_qwen()
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    qwen = qwen.to(device)
-    qwen.eval()
-
-
-    trajectories, time_points = load_data()
-    traj = trajectories[0]
-    input_segment = traj[:context_length]
-    preprocessor = LLMTIMEPreprocessor()
-    encoded_input = preprocessor.encode_sequence(input_segment)
-    inputs = tokenizer(encoded_input, return_tensors="pt")
-    qwen_seq_length = len(inputs["input_ids"][0])
-    result = calculate_qwen_flops(seq_length=len(inputs["input_ids"][0]))
-
-    return result, qwen_seq_length
-
 def calculate_lora_flops(
     seq_length,
     hidden_dim=896,
